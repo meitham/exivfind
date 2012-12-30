@@ -18,7 +18,7 @@ try:
 except ImportError:
     import pdb
 
-from pygnutools import Primary
+from pygnutools import Primary, PrimaryAction
 import pyexiv2
 from functools32 import lru_cache
 
@@ -36,8 +36,9 @@ class TagMatchPrimary(Primary):
     def __call__(self, context):
         fname = context['fname']
         fpath = context['fpath']
-        tag_name = context['args1']
-        tag_value = context['args2']
+        tag_name = self.tag_name
+        tag_value = context['args']
+        verbosity = context.get('verbosity', 0)
         exiv_tag = exiv_tags.get(tag_name, tag_name)
         metadata = read_exiv(fpath, fname, verbosity)
         if metadata is None:
@@ -49,7 +50,7 @@ class TagMatchPrimary(Primary):
             if self.case_sensitive:
                 tag_value, exiv_tag_value = map(lower,
                         [tag_value, exiv_tag_value])
-            if user_tag_value == exiv_tag_value:
+            if tag_value == exiv_tag_value:
                 return context
             return
         except KeyError:  # tag is not available
@@ -60,6 +61,7 @@ class TagMatchPrimary(Primary):
 
 primaries_map = {
         'tag': TagMatchPrimary(case_sensitive=True),
+        'make': TagMatchPrimary(case_sensitive=False, tag_name='make'),
 #        'print_tag': act_print_tag,
 #        'print_all_tags': act_print_all_tags,
 #        'make': partial(tag_match, tag='make'),
@@ -106,14 +108,13 @@ def act_print_all_tags(fpath, fname, *args, **kwargs):
 def cli_args(parser):
     """This will be called by the main cli_args() from pygnutools
     """
-    parser.add_argument('-make', dest='make', action=TestAction)
-    parser.add_argument('-imake', dest='imake', action=TestAction)
-    parser.add_argument('-model', dest='model', action=TestAction)
-    parser.add_argument('-imodel', dest='imodel', action=TestAction)
-    parser.add_argument('-true', dest='true', action=TestAction, nargs=0)
-    parser.add_argument('-print-tag', dest='print_tag', action=ActionAction)
+    parser.add_argument('-make', dest='make', action=PrimaryAction)
+    parser.add_argument('-imake', dest='imake', action=PrimaryAction)
+    parser.add_argument('-model', dest='model', action=PrimaryAction)
+    parser.add_argument('-imodel', dest='imodel', action=PrimaryAction)
+    parser.add_argument('-print-tag', dest='print_tag', action=PrimaryAction)
     parser.add_argument('-print-all-tags', dest='print_all_tags',
-            action=ActionAction, nargs=0)
+            action=PrimaryAction, nargs=0)
     return parser
 
 
