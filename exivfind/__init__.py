@@ -47,9 +47,9 @@ class TagMatchPrimary(Primary):
             exiv_tag_value = metadata[exiv_tag].value
             if verbosity > 2:
                 print("%(exiv_tag)s: %(exiv_tag_value)s" % locals())
-            if self.case_sensitive:
-                tag_value, exiv_tag_value = map(lower,
-                        [tag_value, exiv_tag_value])
+            if not self.case_sensitive:
+                tag_value = tag_value.lower()
+                exiv_tag_value = exiv_tag_value.lower()
             if tag_value == exiv_tag_value:
                 return context
             return
@@ -59,10 +59,35 @@ class TagMatchPrimary(Primary):
             return None
 
 
+class PrintTagPrimary(Primary):
+    """Print a tag by name
+    Does not fail even when tag is not found, like find -print
+    """
+    def __call__(self, context):
+        fname = context['fname']
+        fpath = context['fpath']
+        tag_name = context['args']
+        verbosity = context.get('verbosity', 0)
+        exiv_tag = exiv_tags.get(tag_name, tag_name)
+        metadata = read_exiv(fpath, fname, verbosity)
+        if metadata is None:
+            return context
+        try:
+            exiv_tag_value = metadata[exiv_tag].value
+            print(exiv_tag_value)
+        except KeyError:  # tag is not available
+            if verbosity > 2:
+                traceback.print_exc()
+        return context
+
+
 primaries_map = {
         'tag': TagMatchPrimary(case_sensitive=True),
-        'make': TagMatchPrimary(case_sensitive=False, tag_name='make'),
-#        'print_tag': act_print_tag,
+        'make': TagMatchPrimary(case_sensitive=True, tag_name='make'),
+        'imake': TagMatchPrimary(case_sensitive=False, tag_name='make'),
+        'software': TagMatchPrimary(case_sensitive=True, tag_name='software'),
+        'isoftware': TagMatchPrimary(case_sensitive=False, tag_name='software'),
+        'print_tag': PrintTagPrimary(),
 #        'print_all_tags': act_print_all_tags,
 #        'make': partial(tag_match, tag='make'),
 #        'imake': partial(tag_match, tag='make', case_sensitive=False),
@@ -78,22 +103,6 @@ primaries_map = {
 }
 
 
-def act_print_tag(fpath, fname, *args, **kwargs):
-    verbosity = kwargs.get('verbosity', 0)
-    tag = kwargs['print_tag']
-    metadata = read_exiv(fpath, fname, verbosity)
-    try:
-        exiv_tag = exiv_tags[tag]
-    except KeyError:
-        exiv_tag = tag
-    if metadata is None:
-        return
-    try:
-        exiv_tag_value = metadata[exiv_tag].value
-        print(exiv_tag_value)
-    except KeyError:  # tag is not available
-        if verbosity > 2:
-            traceback.print_exc()
 
 
 def act_print_all_tags(fpath, fname, *args, **kwargs):
