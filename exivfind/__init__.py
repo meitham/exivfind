@@ -12,6 +12,7 @@ from __future__ import print_function
 
 import os
 import traceback
+import fnmatch
 
 try:
     import ipdb as pdb
@@ -34,19 +35,16 @@ class TagMatchPrimary(Primary):
     """Matches an exiv tag from a file against a porposed one from a user
     """
     def __call__(self, context):
-        fname = context['fname']
-        fpath = context['fpath']
+        path = context['path']
         tag_name = self.tag_name
         tag_value = context['args']
         verbosity = context.get('verbosity', 0)
         exiv_tag = exiv_tags.get(tag_name, tag_name)
-        metadata = read_exiv(fpath, fname, verbosity)
+        metadata = read_exiv(path, verbosity)
         if metadata is None:
             return
         try:
             exiv_tag_value = metadata[exiv_tag].value
-            if verbosity > 2:
-                print("%(exiv_tag)s: %(exiv_tag_value)s" % locals())
             if not self.case_sensitive:
                 tag_value = tag_value.lower()
                 exiv_tag_value = exiv_tag_value.lower()
@@ -61,23 +59,42 @@ class TagMatchPrimary(Primary):
 
 class PrintTagPrimary(Primary):
     """Print a tag by name
-    Does not fail even when tag is not found, like find -print
+    Always return context
     """
     def __call__(self, context):
-        fname = context['fname']
-        fpath = context['fpath']
+        path = context['path']
         tag_name = context['args']
         verbosity = context.get('verbosity', 0)
-        exiv_tag = exiv_tags.get(tag_name, tag_name)
-        metadata = read_exiv(fpath, fname, verbosity)
-        if metadata is None:
+        tag_name = exiv_tags.get(tag_name, tag_name)
+        m = read_exiv(path, verbosity)
+        if m is None:
             return context
         try:
-            exiv_tag_value = metadata[exiv_tag].value
-            print(exiv_tag_value)
-        except KeyError:  # tag is not available
-            if verbosity > 2:
-                traceback.print_exc()
+            exiv_tag_value = m[tag_name].raw_value
+            context['buffer'].append(exiv_tag_value)
+            return context
+        except KeyError:
+            pass
+        tags = [m[k].raw_value for k in fnmatch.filter(m.exif_keys, tag_name)]
+        if tags:
+            context['buffer'].append('\n'.join(tags))
+        return context
+
+
+class PrintTagsPrimary(Primary):
+    """Print all tags available in an image
+    Always return context
+    """
+    def __call__(self, context):
+        path = context['path']
+        tag_name = context.get('args', None)
+        verbosity = context.get('verbosity', 0)
+        m = read_exiv(path, verbosity)
+        if m is None:
+            return context
+        tags = [m[k].raw_value for k in fnmatch.filter(m.exif_keys, tag_name)]
+        pairs = ["%(k)s: %(v)s" % {'k': k, 'v': m[k].raw_value} for k in tags]
+        context['buffer'].append('\n'.join(pairs))
         return context
 
 
@@ -88,7 +105,7 @@ primaries_map = {
         'software': TagMatchPrimary(case_sensitive=True, tag_name='software'),
         'isoftware': TagMatchPrimary(case_sensitive=False, tag_name='software'),
         'print_tag': PrintTagPrimary(),
-#        'print_all_tags': act_print_all_tags,
+        'print_tags': PrintTagsPrimary(),
 #        'make': partial(tag_match, tag='make'),
 #        'imake': partial(tag_match, tag='make', case_sensitive=False),
 #        'model': partial(tag_match, tag='model'),
@@ -103,17 +120,6 @@ primaries_map = {
 }
 
 
-
-
-def act_print_all_tags(fpath, fname, *args, **kwargs):
-    verbosity = kwargs.get('verbosity', 0)
-    metadata = read_exiv(fpath, fname, verbosity)
-    if not metadata:
-        return
-    for k in metadata.exif_keys:
-        print("%(k)s: %(v)s" % {'k': k, 'v': metadata[k].raw_value})
-
-
 def cli_args(parser):
     """This will be called by the main cli_args() from pygnutools
     """
@@ -121,17 +127,18 @@ def cli_args(parser):
     parser.add_argument('-imake', dest='imake', action=PrimaryAction)
     parser.add_argument('-model', dest='model', action=PrimaryAction)
     parser.add_argument('-imodel', dest='imodel', action=PrimaryAction)
+    parser.add_argument('-software', dest='software', action=PrimaryAction)
+    parser.add_argument('-isoftware', dest='isoftware', action=PrimaryAction)
     parser.add_argument('-print-tag', dest='print_tag', action=PrimaryAction)
-    parser.add_argument('-print-all-tags', dest='print_all_tags',
-            action=PrimaryAction, nargs=0)
+    parser.add_argument('-print-tags', dest='print_tags',
+            action=PrimaryAction, nargs='?')
     return parser
 
 
 @lru_cache(maxsize=128)
-def read_exiv(fpath, fname, verbosity=0):
+def read_exiv(path, verbosity=0):
     """Returns an EXIF metadata from a file
     """
-    path = os.path.join(fpath, fname)
     try:
         metadata = pyexiv2.ImageMetadata(path)
         metadata.read()
