@@ -92,8 +92,11 @@ class PrintTagsPrimary(Primary):
         m = read_exiv(path, verbosity)
         if m is None:
             return context
-        tags = [m[k].raw_value for k in fnmatch.filter(m.exif_keys, tag_name)]
-        pairs = ["%(k)s: %(v)s" % {'k': k, 'v': m[k].raw_value} for k in tags]
+        if tag_name is not None:
+            tags = [(k, m[k].raw_value) for k in fnmatch.filter(m.exif_keys, tag_name)]
+        else:
+            tags = [(k, m[k].raw_value) for k in m.exif_keys]
+        pairs = ["%(k)s: %(v)s" % {'k': k, 'v': v} for k, v in tags]
         context['buffer'].append('\n'.join(pairs))
         return context
 
@@ -102,17 +105,13 @@ primaries_map = {
         'tag': TagMatchPrimary(case_sensitive=True),
         'make': TagMatchPrimary(case_sensitive=True, tag_name='make'),
         'imake': TagMatchPrimary(case_sensitive=False, tag_name='make'),
+        'model': TagMatchPrimary(case_sensitive=True, tag_name='model'),
+        'imodel': TagMatchPrimary(case_sensitive=False, tag_name='imodel'),
         'software': TagMatchPrimary(case_sensitive=True, tag_name='software'),
         'isoftware': TagMatchPrimary(case_sensitive=False, tag_name='software'),
         'print_tag': PrintTagPrimary(),
         'print_tags': PrintTagsPrimary(),
-#        'make': partial(tag_match, tag='make'),
-#        'imake': partial(tag_match, tag='make', case_sensitive=False),
-#        'model': partial(tag_match, tag='model'),
-#        'imodel': partial(tag_match, tag='model', case_sensitive=False),
-#        'rmake': rmake,
 #        'orientation': orientation,
-#        'software': partial(tag_match, tag='software'),
 #        'date-time': exiv_datetime,
 #        'date-time-newer': exiv_datetime_newer,
 #        'compression': compression,
