@@ -10,18 +10,19 @@ TODO:
 """
 from __future__ import print_function
 
+import fnmatch
+import hashlib
 import os
 import traceback
-import fnmatch
 
 try:
     import ipdb as pdb
 except ImportError:
     import pdb
 
-from pygnutools import Primary, PrimaryAction
 import pyexiv2
-from functools32 import lru_cache
+
+from pygnutools import Primary, PrimaryAction
 
 
 exiv_tags = {
@@ -36,11 +37,15 @@ class TagMatchPrimary(Primary):
     """
     def __call__(self, context):
         path = context['path']
-        tag_name = self.tag_name
-        tag_value = context['args']
+        tag_name = context['args'][0]
+        tag_value = context['args'][1]
         verbosity = context.get('verbosity', 0)
         exiv_tag = exiv_tags.get(tag_name, tag_name)
-        metadata = read_exiv(path, verbosity)
+        try:
+            metadata = context['exif.metadata']
+        except KeyError:
+            metadata = read_exiv(path, verbosity)
+            context['exif.metadata'] = metadata
         if metadata is None:
             return
         try:
@@ -54,7 +59,27 @@ class TagMatchPrimary(Primary):
         except KeyError:  # tag is not available
             if verbosity > 2:
                 traceback.print_exc()
-            return None
+
+
+class PrintBufferHashPrimary(Primary):
+    """Print a hash of the main image buffer
+    """
+    def __call__(self, context):
+        path = context['path']
+        tag_name = context['args']
+        verbosity = context.get('verbosity', 0)
+        try:
+            metadata = context['metadata']
+        except KeyError:
+            metadata = read_exiv(path, verbosity)
+            context['exif.metadata'] = metadata
+        if metadata is None:
+            return context
+        h = hashlib.sha256()
+        h.update(metadata.buffer)
+        digest = h.hexdigest()
+        context['buffer'].append(digest)
+        return context
 
 
 class PrintTagPrimary(Primary):
@@ -66,7 +91,11 @@ class PrintTagPrimary(Primary):
         tag_name = context['args']
         verbosity = context.get('verbosity', 0)
         tag_name = exiv_tags.get(tag_name, tag_name)
-        m = read_exiv(path, verbosity)
+        try:
+            m = context['metadata']
+        except KeyError:
+            m = read_exiv(path, verbosity)
+            context['exif.metadata'] = m
         if m is None:
             return context
         try:
@@ -89,7 +118,11 @@ class PrintTagsPrimary(Primary):
         path = context['path']
         tag_name = context.get('args', None)
         verbosity = context.get('verbosity', 0)
-        m = read_exiv(path, verbosity)
+        try:
+            m = context['metadata']
+        except KeyError:
+            m = read_exiv(path, verbosity)
+            context['exif.metadata'] = m
         if m is None:
             return context
         if tag_name is not None:
@@ -111,6 +144,7 @@ primaries_map = {
         'isoftware': TagMatchPrimary(case_sensitive=False, tag_name='software'),
         'print_tag': PrintTagPrimary(),
         'print_tags': PrintTagsPrimary(),
+        'print_buffer_hash': PrintBufferHashPrimary(),
 #        'orientation': orientation,
 #        'date-time': exiv_datetime,
 #        'date-time-newer': exiv_datetime_newer,
@@ -122,19 +156,60 @@ primaries_map = {
 def cli_args(parser):
     """This will be called by the main cli_args() from pygnutools
     """
-    parser.add_argument('-make', dest='make', action=PrimaryAction)
-    parser.add_argument('-imake', dest='imake', action=PrimaryAction)
-    parser.add_argument('-model', dest='model', action=PrimaryAction)
-    parser.add_argument('-imodel', dest='imodel', action=PrimaryAction)
-    parser.add_argument('-software', dest='software', action=PrimaryAction)
-    parser.add_argument('-isoftware', dest='isoftware', action=PrimaryAction)
-    parser.add_argument('-print-tag', dest='print_tag', action=PrimaryAction)
+    parser.add_argument('-tag', dest='tag', action=PrimaryAction,
+            nargs=2,
+            help="""Filter images by a tag and its value
+            """)
+    parser.add_argument('-make', dest='make', action=PrimaryAction,
+            help="""Filter images by their camera manufacterer name.
+            e.g. `-make Canon`
+            would only match images where Exif.Image.Make is "Canon"
+            """)
+    parser.add_argument('-imake', dest='imake', action=PrimaryAction,
+            help="""Filter images by their camera manufacterer name.
+            similar to `-make` except this match is case insensitive
+            e.g. `-imake canon`
+            would match images where Exif.Image.Make is "Canon" or "CaNoN"
+            """)
+    parser.add_argument('-model', dest='model', action=PrimaryAction,
+            help="""Filter images by their camera manufacterer model.
+            """)
+    parser.add_argument('-imodel', dest='imodel', action=PrimaryAction,
+            help="""Filter images by their camera manufacterer model.
+            This match is case insensitive.
+            """)
+    parser.add_argument('-software', dest='software', action=PrimaryAction,
+            help="""Filter images by Exif.Image.Software value.
+            """)
+    parser.add_argument('-isoftware', dest='isoftware', action=PrimaryAction,
+            help="""Filter images by Exif.Image.Software value.
+            This match is case insensitive.
+            """)
+    parser.add_argument('-print-buffer-hash', dest='print_buffer_hash',
+            action=PrimaryAction, nargs=0, help="""Print a hash of the image
+            buffer.
+            """)
+    parser.add_argument('-print-tag', dest='print_tag', action=PrimaryAction,
+            help="""Print a tag given by name.
+            e.g. `-print-tag "Exif.Thumbnail.Orientation"`
+            You could also use short version of the tag,
+            e.g. `-print-tag "make"` would resolve to "Exif.Image.Make"
+            The argument here could be a pattern (follows unix globbing
+            patterns) so you could say
+            `-print-tag '*Image*'` and that would match any tag that contains
+            the work "Image", case sensitive.
+            """)
     parser.add_argument('-print-tags', dest='print_tags',
-            action=PrimaryAction, nargs='?')
+            action=PrimaryAction, nargs='?',
+            help="""Print a tag given by name.
+            similar to -print-tag except this would print the actual tag name
+            before the tag value, separated by a colon.
+            The argument here is optional and if no argument provided then it
+            would print all tags available in the image metadata.
+            """)
     return parser
 
 
-@lru_cache(maxsize=128)
 def read_exiv(path, verbosity=0):
     """Returns an EXIF metadata from a file
     """
@@ -145,5 +220,4 @@ def read_exiv(path, verbosity=0):
     except(IOError, UnicodeDecodeError) as e:
         if verbosity > 1:
             traceback.print_exc()
-        return None
 
